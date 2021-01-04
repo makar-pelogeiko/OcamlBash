@@ -1,5 +1,5 @@
 type expr;;
-type cmd;;
+type cmd;; (*готово*)
 type pipe;;
 type fu;;
 type mfor;;
@@ -10,10 +10,10 @@ type mif;;
 type mwhile;;
 type muntil;;
 type compList;;
-type redirect;;
+type redirect;; (*готово*)
 type word;;
 type wordAssign;;
-type arifm;;
+type arifm;; (*готово*)
 type cons;;
 type logOp;;
 type pipeOp;;
@@ -56,7 +56,7 @@ type pipe = (*не работает надо чет придумать*)
   ;;
 type cmd =
   (*WHAT A FU*K *)
-  Name of string * arifm * redirect (* name command, parametrs, redirection*)
+  Name of string * string list * redirect (* name command, parametrs, redirection*)
   |NameN of string * redirect (* name command, redirection*)
   | Arifm of arifm
   ;;

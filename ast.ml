@@ -192,3 +192,21 @@ let rec typerW r =
 
 let input = LazyStream.of_string "2*(2+3)";;
 typerW input;;
+
+(*from AST2.ML*)
+let rec cmd_pars input = (name_p <|> nameN_p <|> arifm_p) input
+and name_p input =
+  (ident         >>= fun nam ->
+  (many ident_p)        >>= fun arg ->
+  token ">"    >> (* > *)
+  ident_p        >>= fun red ->
+   return (Name (nam, arg, Redirect(red, "", "")))) input 
+and nameN_p input =
+  (ident         >>= fun nam ->
+   token ">"    >> (* > *)
+   ident_p        >>= fun red ->
+   return (NameN (nam, Redirect(red, "", "")))) input 
+and arifm_p input =
+  (all_arifm       >>= fun ar ->
+   return (Arifm (ar))) input
+;;

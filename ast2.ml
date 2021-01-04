@@ -162,70 +162,25 @@ let token s =
 (*............................*)
 (*............................*)
 (*........AST....................*)
-type expr;;
-type cmd;;
-type pipe;;
-type fu;;
-type mfor;;
-type forList;;
-type enumFor;;
-type mcase;;
-type mif;;
-type mwhile;;
-type muntil;;
-type compList;;
-(*type redirect;;*)
-type word;;
-type wordAssign;;
-type arifm;;
-(*type const;;*)
-type logOp;;
-type pipeOp;;
 
 type const =
   Int of int
   | Float of float
   | String of string
 ;;
+type word =
+  ConstW of const
+  ;;
 type redirect =
   Redirect of string * string * string
 ;;
-
-type bCommand = 
-  LogicalExpression of expr
-  | Pipeline of pipe
-  | Command of cmd
-  | Function of fu
-  | For of mfor
-  | Case of mcase
-  | If of mif
-  | While of mwhile
-  | Until of muntil
-  ;;
-type logOp = And | Or | Great | Less | EcGreat | EcLess | Ecual;; (*логические выражения, как их парсить? например обратно 2 раза pattern match?*)
-
-type expr =
-  (*надо ли еще 1 expr отдельно*)
-  LogicalExpression of logOp * expr * expr
-  | Pipeline of pipe
-  | Command of cmd
-  | Function of fu
-  | For of mfor
-  | Case of mcase
-  | If of mif
-  | While of mwhile
-  | Until of muntil
-  ;;
-type pipeOp = And | Or | Dpoint;; (*склейки пайпы || && ;*)
-type pipe = (*не работает надо чет придумать*)
-   Pipline of pipeOp * pipe * pipe
-  | Command of cmd
-  | Function of fu
-  | For of mfor
-  | Case of mcase
-  | If of mif
-  | While of mwhile
-  | Until of muntil
+type arifm =
+  Ecual of string * arifm          (* means a = b or a = 4*)
+  | Plus of arifm * arifm        (* means a + b *)
+  | Minus of arifm * arifm       (* means a - b *)
+  | Multi of arifm * arifm       (* means a * b *)
+  | Divide of arifm * arifm      (* means a / b *)
+  | Const of const           (* "x", "y", "n", etc. *)
   ;;
 type cmd =
   (*WHAT A FU*K *)
@@ -233,52 +188,29 @@ type cmd =
   |NameN of string * redirect (* name command, redirection*)
   | Arifm of arifm
   ;;
-type arifm =
-  Ecual of word * arifm          (* means a = b or a = 4*)
-  | Plus of arifm * arifm        (* means a + b *)
-  | Minus of arifm * arifm       (* means a - b *)
-  | Multi of arifm * arifm       (* means a * b *)
-  | Divide of arifm * arifm      (* means a / b *)
-  | Const of const           (* "x", "y", "n", etc. *)
-  ;;
-type fu =
-  Funct of string * string * compList
-  ;;
-type compList =
-  LogicalExpression of expr
-  | Pipeline of pipe
+  type enumFor =
+    Listm of word
+    | Str of string
+  ;; 
+  type forList = 
+    Arg of word * enumFor
+    ;;
+  
+type logOp = And | Or | Great | Less | EcGreat | EcLess | Ecualy;; (* как их прикрутить?логические выражения, как их парсить? например обратно 2 раза pattern match?*)
+type expr =
+  Logexpr of logOp * arifm * arifm (*логические выражения*)
+
+type pipeOp = And | Or | Dpoint;; (*склейки пайпы || && ;*)
+type pipe = (*не работает надо чет придумать*)
+   Pipline of pipeOp * pipe * pipe
   | Command of cmd
-  | Function of fu
-  | For of mfor
-  | Case of mcase
-  | If of mif
-  | While of mwhile
-  | Until of muntil
-  ;;
-type mfor =
-  For of forList * compList
-  ;;
-type forList = 
-  Arg of word * enumFor
-  ;;
-type enumFor =
-  Listm of word
-  | Str of string
-;; 
-type mcase =
-  CaseItem of word * compList
-  ;;
-type mif =
-  Clause of compList * compList * compList (*if then else*)
-  ;;
-type mwhile =
-  Clause of compList * compList (*clause, todoList*)
-  ;;
-type muntil =
-  Clause of compList * compList (*clause, todoList*)
-  ;;
-type word =
-  ConstW of const
+  | Function of string * string * pipe (*name, parametrs, operators*)
+  | For of forList * pipe (*аргумент и само тело фора надо еще думать над ним*)
+  | Case of word * pipe (*не совсем знаю механизм кейсов в баше*)
+  | If of expr * pipe * pipe (*if then else*)
+  | While of expr * pipe (*clause, todoList*)
+  | Until of expr * pipe (*clause, todoList*)
+  | LogicalExpression of expr (*может или не может тут быть??*)
   ;;
 
 (*...........AST.................*)
@@ -286,73 +218,18 @@ type word =
 (*............................*)
 (*............................*)
 (*............................*)
-(*type expr =
-  Plus of expr * expr        (* means a + b *)
-| Minus of expr * expr       (* means a - b *)
-| Multi of expr * expr       (* means a * b *)
-| Divide of expr * expr      (* means a / b *)            
-| Const of cons              (* "x", "y", "n", etc. *)
-;;
-*)
-let rec to_string_expr e =
-  match e with
-    Plus (left, right)   -> "(" ^ (to_string_expr left) ^ " + " ^ (to_string_expr right) ^ ")"
-  | Minus (left, right)  -> "(" ^ (to_string_expr left) ^ " - " ^ (to_string_expr right) ^ ")"
-  | Multi (left, right)  -> "(" ^ (to_string_expr left) ^ " * " ^ (to_string_expr right) ^ ")"
-  | Divide (left, right) -> "(" ^ (to_string_expr left) ^ " / " ^ (to_string_expr right) ^ ")"
-  | Const (Int c) -> string_of_int c 
-  | Const (String d)-> "const"
-  | Const (Float d)-> "const" 
-  ;;
 
 
-
-print_string (to_string_expr (Multi(Const (Int 3), Plus(Const (Int 5), Const (Int 4)))));;
-print_string "\n";;
-print_string (to_string_expr (Plus(Const (Int 3), Const (Int 3))));;
 (* эта функция применяет парсер к строке *)
 let apply p s = parse p (LazyStream.of_string s)
 (* тут производится парсинг целых чисел и операция + - * / *)
 let digits = spaces >> many1 digit => implode
   let integer = digits => int_of_string
-  let temp_integer c = (Const ( Int (int_of_string c)))
-  let some_integer = digits => temp_integer
+  let temp_integer c = (Const ( Int (int_of_string c)))(*промежуточный перевод*)
+  let some_integer = digits => temp_integer(*возвращает int  в нужном формате и остается парсером*)
+  let floater = digits >>= fun fir -> token "." >> digits >>= fun sec -> return(float_of_string (fir ^ "." ^ sec))
+  let some_floater = digits >>= fun fir -> token "." >> digits >>= fun sec -> return(Const (Float (float_of_string (fir ^ "." ^ sec))))
 ;;
-
-let parens = between (token "(") (token ")")
-let add_op = token "+" >> return (fun x y -> Plus (x, y))
-let sub_op = token "-" >> return (fun x y -> Minus (x, y))
-let multi_op = token "*" >> return (fun x y -> Multi (x, y))
-let div_op = token "/" >> return (fun x y -> Divide (x, y))
-
-let rec expr input = chainl1 term (add_op <|> sub_op) input
-and term input = chainl1 factor (multi_op <|> div_op) input
-and factor input = (parens expr <|> some_integer) input
-;;
-
-
-let expression_to_string d =
-  let rec temp ex =
-    match ex with
-    Plus (l, r) -> "Plus(" ^ temp l ^ " , " ^ temp r ^ ")"
-    | Minus (l, r) -> "Minus(" ^ temp l ^ " , " ^ temp r ^ ")"
-    | Multi (l, r) -> "Multi(" ^ temp l ^ " , " ^ temp r ^ ")"
-    | Divide (l, r) -> "Divide(" ^ temp l ^ " , " ^ temp r ^ ")"           
-    | Const (Int c) -> string_of_int c 
-    | Const (String d)-> d
-    | Const (Float d)-> "const" 
-    in 
-  match d with
-  None -> "None"
-  | Some x -> temp x
-  ;;
-
-
-print_string "//////////////////\n";;
-let (str:string) = "(3+5)*4 + 10";;
-print_string (str ^ " = ");;
-print_string (expression_to_string (apply expr str));;
-(*конец парсинга expression OR arifm*)
 
 let reserved =
   [ "true"; "false"; "if"; "else"; "for"; "while"; "public"; "const"; "static"
@@ -368,8 +245,63 @@ let ident =
 let ident_p =
   spaces >> (letter <~> many (alpha_num <|> (one_of ['.']) )) => implode
   >>= function s when List.mem s reserved -> mzero | s -> return s
- (*had to be like ident, but with points. Now it is not correct*) 
+ (*had to be like ident, but with points.*) 
 ;;
+let some_ident =
+  spaces >> (letter <~> many alpha_num) => implode
+  >>= function s when List.mem s reserved -> mzero | s -> return (Const (String s))
+let pars_const =
+  (some_floater <|> some_integer <|> some_ident)
+
+let parens = between (token "(") (token ")")
+let add_op = token "+" >> return (fun x y -> Plus (x, y))
+let sub_op = token "-" >> return (fun x y -> Minus (x, y))
+let multi_op = token "*" >> return (fun x y -> Multi (x, y))
+let div_op = token "/" >> return (fun x y -> Divide (x, y))
+
+let rec arifm input = chainl1 term (add_op <|> sub_op) input
+and term input = chainl1 factor (multi_op <|> div_op) input
+and factor input = (parens arifm <|> pars_const) input
+;;
+
+let rec arifm_to_string ex =
+  match ex with
+  Plus (l, r) -> "Plus(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
+  | Minus (l, r) -> "Minus(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
+  | Multi (l, r) -> "Multi(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
+  | Divide (l, r) -> "Divide(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"           
+  | Const (Int c) -> string_of_int c 
+  | Const (String d)-> d
+  | Const (Float d)-> string_of_float d 
+  | Ecual (str, ar) -> "Ecual(" ^ str ^ " , " ^ arifm_to_string ar ^ ")"
+
+let arifmOption_to_string d =
+  match d with
+  None -> "None"
+  | Some x -> arifm_to_string x
+  ;;
+
+
+print_string "//////////////////\n";;
+let (str:string) = "(3+5)*4.1 + Path";;
+print_string (str ^ " = ");;
+print_string (arifmOption_to_string (apply arifm str));;
+(*конец парсинга arifm, но бужет еще функция all_arifm*)
+
+(*та самая all_arifm которая парсит арифм и Ecual*)
+let rec all_arifm input = (ecualer <|> arifm) input
+ and ecualer input =
+  (ident >>= fun variable ->
+  token "=" >>
+  arifm >>= fun arifmer ->
+  return (Ecual(variable, arifmer)) ) input
+;;
+
+let (str:string) = "sss = (3+5)*4 + 10";;
+print_string ("\n" ^ str ^ " <-> ");;
+print_string (arifmOption_to_string (apply all_arifm str));;
+
+
 print_string "\n example of ident_p: ";
 match apply ident_p "sd.sd." with
 None -> print_string "None"
@@ -377,32 +309,39 @@ None -> print_string "None"
 ;;
 
 let name = ident >>= fun name -> return (name)
-
+(*
 let atom = (ident => (fun s -> String s))
        <|> (integer => (fun x -> Int x))
 ;;
-       
-let rec cmd_pars input = (nameA_p <|> name_p <|> arifm_p) input
-and nameA_p input =
-  (ident         >>= fun nam ->
-  (many ident_p)        >>= fun arg ->
-  token ">"    >> (* > *)
-  ident_p        >>= fun red ->
-   return (Name (nam, arg, Redirect(red, "", "")))) input 
+*)
+let rec cmd_pars input = (name_p <|> nameN_p <|> arifm_p) input
 and name_p input =
   (ident         >>= fun nam ->
-   many ident    >>= fun arg ->
-   token ">"    >> (* > *)
-   ident        >>= fun red ->
-   return (Name (nam, arg, Redirect(red, "", "")))) input 
-and arifm_p input =
+  (many ident_p)        >>= fun arg ->
+  ((with_redirF nam arg) <|> (with_redirL nam arg) <|> (return (Name (nam, arg, Redirect("", "", ""))) )) ) input
+    and with_redirF nam arg input = 
+      (token ">"    >> (* > *)
+      ident_p        >>= fun red ->
+      (
+      match arg with
+        [] -> return (NameN (nam, Redirect(red, "", ""))) 
+      | a::s -> return (Name (nam, arg, Redirect(red, "", "")))
+      ) )input
+    and with_redirL nam arg input = 
+      (token "<"    >> (* < *)
+      ident_p        >>= fun red ->
+      (
+      match arg with
+        [] -> return (NameN (nam, Redirect("", red, ""))) 
+      | a::s -> return (Name (nam, arg, Redirect("", red, "")))
+      ) )input
+and nameN_p input =
   (ident         >>= fun nam ->
-   many ident    >>= fun arg ->
-   token ">"    >> (* > *)
-   ident        >>= fun red ->
-   return (Name (nam, arg, Redirect(red, "", "")))) input
-   
-  ;;
+   ((with_redirF nam []) <|> (with_redirL nam []) <|> (return (NameN (nam, Redirect("", "", ""))) )) ) input
+and arifm_p input =
+  (all_arifm       >>= fun ar ->
+   return (Arifm (ar))) input
+;;
 
 (*function to convert*)
 let cmd_to_string d =
@@ -412,17 +351,19 @@ let cmd_to_string d =
   in
   let rec temp ex =
     match ex with
-    Name (s, li, Redirect(fir, sec, thi)) -> "Name(" ^ s ^" , " ^ list_string li ^ " , " ^ "Redirect(" ^ fir ^ " , " ^ sec ^ " , " ^ thi ^ ")"
-    | NameN (s, r) -> "NemeN"
-    | Arifm (a) -> "Arifm"
+      Name (s, li, Redirect(fir, sec, thi)) -> "Name(" ^ s ^" , " ^ list_string li ^ " , " ^ "Redirect(" ^ fir ^ " , " ^ sec ^ " , " ^ thi ^ "))"
+    | NameN (s, Redirect(fir, sec, thi)) -> "NemeN(" ^ s ^" , "  ^ "Redirect(" ^ fir ^ " , " ^ sec ^ " , " ^ thi ^ "))"
+    | Arifm (a) -> arifm_to_string a
     in 
   match d with
   None -> "None"
   | Some x -> temp x
 ;;
+(*тест парсера cmd*)
 let c_str = "cat file.txt > my.txt";;
 let file = apply cmd_pars c_str;;
 print_string ("\n example of cmd_parse with " ^ c_str ^ ": ");;
 print_string (cmd_to_string (file));;
 print_string "\n";;
 ;;
+
