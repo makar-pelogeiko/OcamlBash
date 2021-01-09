@@ -230,7 +230,7 @@ and pipeOp = And | Or | Dpoint | Redi (*склейки пайпы || && ;*)
 and pipe = (*не работает надо чет придумать*)
    | Expression of expr (*может или не может тут быть??*)
    | IfElse of expr * pipeConveyor * pipeConveyor (*if then else*)
-   | While of expr * pipeConveyor (*clause, todoList*)
+   | While of arifm * pipeConveyor (*clause, todoList*)
  (* | For of forList * pipe (*аргумент и само тело фора надо еще думать над ним*)
   | Case of word * pipe (*не совсем знаю механизм кейсов в баше*)
   *)
@@ -269,7 +269,7 @@ let digits = spaces >> many1 digit => implode
 let reserved =
   [ "true"; "false"; "if"; "else"; "for"; "while"; "public"; "const"; "static"
   ; "int"; "bool"; "string"; "void"; "char"; "null"; "new"; "this"; "base"
-  ; "vitual"; "override"; "abstract"; "namespace"; "using"; "do"; "return"
+  ; "vitual"; "override"; "abstract"; "namespace"; "using"; "do"; "done"; "return"
   ; "continue"; "brake"; "class" ]
 
 (*returns string which is not in reserved*)
@@ -387,7 +387,7 @@ let arifmOption_to_string d =
   ;;
 
 print_string "\n//////ARIFM TEST////////////\n";;
-let (str:string) = "(3+5)==4.1 + ${$Path[1]}";;
+let (str:string) = "(3+5)==4.1 +${Path[1]}";;
 print_string (str ^ " = ");;
 print_string (arifmOption_to_string (apply arifm str));;
 
@@ -583,12 +583,12 @@ and p_pipe input =
         (pars_expr >>= fun ar -> return (Expression (ar))) input        
       and while_pars input =
         (token "while"   >> (* while *)
-        spaces >> token "[" >>
-        pars_expr         >>= fun pred ->
-        spaces >> token "]" >>
-        token "do" >> (* do *)
-        pars_pipeConv     >>= fun act ->
-        token "done"    >>
+        spaces >> token "[" >> spaces >>
+        arifm         >>= fun pred ->
+        spaces >> token "]" >> spaces >>
+        token "do" >> spaces >> (* do *)
+        pars_pipeConv    >>= fun act ->
+        spaces >> token "done"    >>
         return (While (pred, act))) input
       and ifelse_pars input =
         (token "if"   >> (* if *)
@@ -607,7 +607,7 @@ let rec pipe_to_string pip =
   in*)
   match pip with
   | Expression (ar) -> "Expression(" ^ expr_to_string ar ^ ")"
-  | While (pred, p) -> "While(" ^ expr_to_string pred ^ ", " ^ pipeConveyor_to_string p ^ ")"
+  | While (pred, p) -> "While(" ^ arifm_to_string pred ^ "->act " ^ pipeConveyor_to_string p ^ ")"
   | IfElse (ar, l, r) -> "IFElse(" ^ expr_to_string ar ^ ", " ^ pipeConveyor_to_string l ^ ", " ^ pipeConveyor_to_string r ^ ")"
 and pipeConveyor_to_string conv =
   match conv with
@@ -617,13 +617,14 @@ and pipeConveyor_to_string conv =
   | _ -> "did not done yet"
 let option_pipeConveyr_string pip =
   match pip with
-   None -> "None"
+   None -> "None!"
   | Some (p) -> pipeConveyor_to_string p
 ;;
-(*while [ss=s] do pwd file.txt > my.txt; ss= 10+2 done*)
-let ff = print_string "\n//////PIPE TEST////////////\n";;
+(*echo www.txt ; cat w123.txt | echo yra*)
+(*funcFactor (){facto=1 ; while [$1 > 0] do facto=$(($facto*$1)) ; 1=$(($1-1)) done } funFactor 5*)
+let ff = print_string "\n//////PIPECONV TEST////////////\n";;
 
-let (str:string) = "echo www.txt ; cat w123.txt | echo yra";;
+let (str:string) = "while [$1 > 0] do facto=$(($facto*$1)) ; 1=$(($1-1)) done";;
 print_string (str ^ "\n <-> \n");;
 let pp_str = "test () {pwd file.txt > my.txt; ss= 10+2}"
 let ddddd = print_string (option_pipeConveyr_string (apply pars_pipeConv str));;
@@ -650,7 +651,7 @@ let option_declFunction_string = function
 | Some (x) -> declFunction_to_string x
 
 let ff = print_string "\n//////DeclFUNCTION TEST////////////\n";;
-
+(*funcFactor () { facto=1 ; while [$1 > 0] do facto=$facto*$1 ; 1=$1-1 done }*)
 let (str:string) = "myfunction (){ echo www.txt ; cat w123.txt | echo yra }";;
 print_string (str ^ "\n <-> \n");;
 let ddddd = print_string (option_declFunction_string (apply pars_declFunction str));;
@@ -692,8 +693,28 @@ let option_bCmdConv_string = function
 
 
 let ff = print_string "\n//////BCmd+BCommand TEST////////////\n";;
-let (str:string) = "myfn (){echo eeee} echo rrr";; 
+let (str:string) = "funcFactor (){facto=1 ; while [$1 > 0] do facto=$(($facto*$1)) ; 1=$(($1-1)) done ; echo $facto } funFactor 5";; 
 print_string (str ^ "\n <-> \n");;
-let sds = apply pars_bComdConv str
-
 let ddddd = print_string (option_bCmdConv_string (apply pars_bComdConv str));;
+let first = CallFunction("echo", [Word(WString(String("eeee")))], Redirect("","" ,"" ))
+let second = SigPipe(Expression(first))
+let third = Method("myfn", second)
+let pred =
+  BSigCmd
+    (PipeConv
+       (SigPipe
+          (Expression
+             (CallFunction
+                ("echo", [Word (WString (String "rrr"))], Redirect ("", "", ""))))))
+
+let f = BConv(DeclFunct(third), pred)
+
+
+(*
+Factorial
+funcFactor (){facto=1 ; while [$1 > 0] do facto=$(($facto*$1)) ; 1=$(($1-1)) done ; echo $facto } funFactor 5
+
+<->
+
+BConv(DeclFunct(funcFactor>Pipeline(Dpoint, Expression(Eqal(SimpleVari(facto),Word(WString(INT:1)), )), Pipeline(Dpoint, While(Great(Const(Vari( SimpleVari(1))) , Const(INT:0))->act Pipeline(Dpoint, Expression(Eqal(SimpleVari(facto),Subarifm(Multi(Const(Vari( SimpleVari(facto))) , Const(Vari( SimpleVari(1))))), )), SigPipe(Expression(Eqal(SimpleVari(1),Subarifm(Minus(Const(Vari( SimpleVari(1))) , Const(INT:1))), ))))), SigPipe(Expression(CallFunction(echo, Listarg(Word(WString(Vari( SimpleVari(facto)))), Word(WString(STR:)), )Redirect(, , )))))))<>BsigCmd(SigPipe(Expression(CallFunction(funFactor, Listarg(Word(WString(INT:5)), )Redirect(, , ))))))
+*)
