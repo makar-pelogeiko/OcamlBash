@@ -162,19 +162,29 @@ let token s =
 (*............................*)
 (*............................*)
 (*........AST....................*)
-type const =
-  Int of int
+type enumFor =
+  Listm of string
+  | Str of string
+ 
+type forList = 
+  Arg of string * enumFor
+
+type vari =
+  | SimpleVari of string (*пересечение с const Variable*)
+  | ArrayVari of string * arifm (*обращение к массиву*)
+  | ArrayDecl of string (*объявление массива и присваивание ему чего-то*)
+  | Braces of vari (*${ss}, но не ${$s}*)
+
+and const =
+  | Int of int
   | Float of float
   | String of string
-  | Variable of string
+  | Variable of vari
 
-type word =
-  ConstW of const
-
-type redirect =
+and redirect =
   Redirect of string * string * string
 
-type stroperator =
+and stroperator =
   Leng of const (*${#string}*)
   | PicFromPos of const * const (*${string:position}*)
   | PicFromPosLeng of const * const *const (*${string:position:length}*)
@@ -187,24 +197,12 @@ type stroperator =
   | ReplaceBeg of const * const * const (*${string/#pattern/replacement}*)
   | ReplaceEnd of const * const * const (*${string/%pattern/replacement}*)
 
-
-type enumFor =
-  Listm of word
-  | Str of string
- 
-type forList = 
-  Arg of word * enumFor
-
-type arconst =
-  | Const of const
-  | SubFn of arifm (*$(...)*)   
 and arifm =
-  Ecual of string * arifm          (* means a = b or a = 4*)
   | Plus of arifm * arifm        (* means a + b *)
   | Minus of arifm * arifm       (* means a - b *)
   | Multi of arifm * arifm       (* means a * b *)
   | Divide of arifm * arifm      (* means a / b *)
-  | AriConst of arconst               (* "x", "y", "n", etc. *)
+  | Const of const               (* "x", "y", "n", etc. *)
   | AndAr of arifm * arifm         (*a && b *)
   | OrAr of arifm * arifm          (*a || b *)
   | GreatAr of arifm * arifm       (*a > b *)
@@ -212,34 +210,45 @@ and arifm =
   | EcGreatAr of arifm * arifm     (*a >= b *)
   | EcLessAr of arifm * arifm      (*a =< b *)
   | EcualyAr of arifm * arifm      (*a == b *) 
-  | StringOp of stroperator
-  | CallFunction of string * arifm list * redirect (*name, parametrs*)  
-  (*| SubFn of arifm (*$(...)*)*)
-  | Braces of arifm (*${...}*)
-
-and cmd =
-  (*Name of string * string list * redirect (* name command, parametrs, redirection*)*)
-  (*| NameN of string * redirect (* name command, redirection*)*)
-  | Arifm of arifm (*в основном вызов функций и присваивание*)
-  
+and brExpan =
+  InBracExpan of word list (*{a,b,c}*)
+and word =
+  | WString of const
+  | WbrExp of brExpan
+  | WStringCont of const * word
+  | WbrExpCont of brExpan * word
+and arg = 
+  | SubFn of expr (*$(...)*)
+  | StringOp of stroperator (*${#string}*)
+  | Word of word (*{a,b,c}, или string*) (*КОСЯК: ВСТАВИТЬ СЮДА ПЕРЕМЕННЫЕ*)
+  | Subarifm of arifm (*$((2+2))*)
+and expr =
+  | Eqal of vari * arg list (* a=b НО: смотри в листок внимательно*)
+  | CallFunction of string * arg list * redirect (*name, parametrs*)
 
 and pipeOp = And | Or | Dpoint | Redi (*склейки пайпы || && ;*)
 and pipe = (*не работает надо чет придумать*)
-   Pipline of pipeOp * pipe * pipe
-  (*| Command of cmd*)
-  | For of forList * pipe (*аргумент и само тело фора надо еще думать над ним*)
+   | Expression of expr (*может или не может тут быть??*)
+   | IfElse of expr * pipeConveyor * pipeConveyor (*if then else*)
+   | While of expr * pipeConveyor (*clause, todoList*)
+ (* | For of forList * pipe (*аргумент и само тело фора надо еще думать над ним*)
   | Case of word * pipe (*не совсем знаю механизм кейсов в баше*)
-  | IfElse of arifm * pipe * pipe (*if then else*)
-  | While of arifm * pipe (*clause, todoList*)
-  | Until of arifm * pipe (*clause, todoList*)
-  | Expression of arifm (*может или не может тут быть??*)
+  *)
+  (*| Until of arifm * pipe (*clause, todoList*)
+  *)
+and pipeConveyor =
+  | Pipline of pipeOp * pipe * pipeConveyor
+  | SigPipe of pipe
 
 type declFunct = 
-  Method of string * pipe 
-
+  Method of string * pipeConveyor 
+(*тут надо еще шаманить, но оно должно работать*)
 type  bCommand = 
-  | Pipe of pipe
-  | DeclFunct of declFunct (*kosiak*)
+  | PipeConv of pipeConveyor
+  | DeclFunct of declFunct
+type bCmdConv =
+  | BConv of bCommand * bCmdConv (*конвеер функций и кода*)
+  | BSigCmd of bCommand (*функция либо код*)
 (*...........AST.................*)
 (*............................*)
 (*............................*)
@@ -264,6 +273,9 @@ let reserved =
   ; "continue"; "brake"; "class" ]
 
 (*returns string which is not in reserved*)
+let bash_ident =
+  many alpha_num => implode
+  >>= function s when List.mem s reserved -> mzero | s -> return s
 let ident =
   spaces >> (letter <~> many alpha_num) => implode
   >>= function s when List.mem s reserved -> mzero | s -> return s
@@ -274,23 +286,157 @@ let ident_p =
  (*had to be like ident, but with points.*) 
 
 let some_ident =
-  spaces >> (letter <~> many (alpha_num <|> (one_of ['.']) )) => implode
+  (many (alpha_num <|> (one_of ['.']) )) => implode
   >>= function s when List.mem s reserved -> mzero | s -> return (String s)
+(* тест some_ident чтоб было топроно как в баш
+let stringer ww =
+  match ww with 
+  None -> "NOne"
+  | Some (String(x)) -> "String(" ^ x ^ ")"
+  | _ -> "shit"
 
-let pars_vari =
-  (token "$" >> ident >>= fun str -> return(Variable (str)) )
-let pars_const =
-  (some_floater <|> some_integer <|> some_ident)
-let pars_const_arifm =
-  pars_const >>= fun ar -> return(Const (ar))
-let pars_const_vari =
-  (pars_vari <|> pars_const)
-let pars_const_vari_arifm =
-  pars_const_vari >>= fun ar -> return(AriConst(Const (ar)))
-let parse_word =
-  ident >>= fun str -> return (ConstW (String (str)))
+let d = print_string (stringer (apply some_ident "s.s. s."))
+*)
+let parens = between (token "(") (token ")")
+let add_op = token "+" >> return (fun x y -> Plus (x, y))
+let sub_op = token "-" >> return (fun x y -> Minus (x, y))
+let multi_op = token "*" >> return (fun x y -> Multi (x, y))
+let div_op = token "/" >> return (fun x y -> Divide (x, y))
 
-(*
+let and_op = token "&&" >> return (fun x y -> AndAr (x, y))
+let or_op = token "||" >> return (fun x y -> OrAr (x, y))
+let great_op = token ">" >> return (fun x y -> GreatAr (x, y))
+let less_op = token "<" >> return (fun x y -> LessAr (x, y))
+let ecGreat_op = token ">=" >> return (fun x y -> EcGreatAr (x, y))
+let ecLess_op = token "=<" >> return (fun x y -> EcLessAr (x, y))
+let ecualy_op = token "==" >> return (fun x y -> EcualyAr (x, y))
+(*--------------------------------------------------------------------------------------------------------------------*)
+(*Парсим const vari-без объявления массива arifm*)
+
+let rec pars_vari input = (pars_bracesEx <|> pars_array <|> pars_Simplevari)input
+  and pars_bracesEx input =
+    (token "$" >> (between (token "{") (token "}") pars_variNot) >>= fun var -> return(Braces(var)) ) input
+  and pars_Simplevari input =
+    (token "$" >> bash_ident >>= fun str -> return(SimpleVari(str))) input
+  and pars_array input=
+    (bash_ident >>= fun str -> (between (token "[") (token "]") arifm) >>= fun index -> return (ArrayVari(str, index))) input
+  and pars_variNot input =
+  (pars_array <|> pars_SimplevariNot) input
+  and pars_SimplevariNot input =
+    (bash_ident >>= fun str -> return(SimpleVari(str))) input
+  (*----------*)
+and vari_to_const input =
+  (pars_vari >>= fun var -> return (Variable(var))) input
+and pars_const input =
+  (vari_to_const <|> some_floater <|> some_integer <|> some_ident) input
+and pars_const_arifm input =
+  (pars_const >>= fun ar -> return(Const (ar)) )input
+
+and arifm input = chainl1 arifmetic (and_op <|> or_op <|> ecGreat_op <|> ecLess_op <|> great_op <|> less_op <|> ecualy_op) input
+and arifmetic input = chainl1 term (add_op <|> sub_op) input
+and term input = chainl1 factor (multi_op <|> div_op) input
+and factor input = (parens arifm <|> pars_const_arifm) input
+
+let vari_eqal input = (*используем в парсере expr, для приравнивания*)
+  ((bash_ident >>= fun str -> return(SimpleVari(str))) <|> pars_array) input
+let rec vari_to_string var =
+  match var with
+  | SimpleVari (x) -> "SimpleVari(" ^ x ^ ")" 
+  | ArrayVari (name, index) -> "ArryVari(" ^ name ^ ", " ^ arifm_to_string index ^ ")"
+  | ArrayDecl (name) -> "ArrayDeclar(" ^ name ^ ")"
+  | Braces (v) -> "Barces(" ^ vari_to_string v ^ ")"
+and const_to_string ct =
+  match ct with
+  | Int c -> "INT:" ^ string_of_int c 
+  | String d-> "STR:" ^ d
+  | Float d-> "FLOAT:" ^ string_of_float d
+  | Variable v -> "Vari( " ^ vari_to_string v ^ ")" 
+and arifm_to_string ex =
+  (*let rec arlist_string = function
+    | [] -> ""
+    | e :: l -> arifm_to_string e ^ " " ^ arlist_string l in
+  *)
+  match ex with
+  Plus (l, r) -> "Plus(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
+  | Minus (l, r) -> "Minus(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
+  | Multi (l, r) -> "Multi(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
+  | Divide (l, r) -> "Divide(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"           
+  | Const ct -> "Const(" ^ const_to_string ct ^ ")"
+  | AndAr (l, r)     -> "And(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")" (*a && b *)
+  | OrAr (l, r)      -> "Or(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")" (*a || b *)
+  | GreatAr (l, r)   -> "Great(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"(*a > b *)
+  | LessAr (l, r)    -> "Less(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"(*a < b *) 
+  | EcGreatAr (l, r) -> "EcGreat(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"  (*a >= b *)
+  | EcLessAr (l, r)  ->"EcLess(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"    (*a =< b *)
+  | EcualyAr (l, r)  ->"EcualY(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"    (*a == b *)
+let constOption_to_string d =
+  match d with
+  None -> "None"
+  | Some x -> const_to_string x
+  ;;
+
+print_string "//////CONST+VARI TEST////////////\n";;
+let (str:string) = "${aa[1+${bb[2]}]}";;
+print_string (str ^ " = ");;
+print_string (constOption_to_string (apply pars_const str));;
+
+let arifmOption_to_string d =
+  match d with
+  None -> "None"
+  | Some x -> arifm_to_string x
+  ;;
+
+print_string "\n//////ARIFM TEST////////////\n";;
+let (str:string) = "(3+5)==4.1 + ${$Path[1]}";;
+print_string (str ^ " = ");;
+print_string (arifmOption_to_string (apply arifm str));;
+
+
+(*-----------------------Парсим WORD--------------------------------------------------------*)
+let rec pars_word input = 
+  (wbrExpCont <|> wStringCont <|> wString <|> wbrExp) input
+  and wString input =
+    (pars_const >>= fun con -> return(WString(con))) input
+  and wbrExp input =
+    ( token "{" >> inBraceExp >>= fun brac -> token "}" >> return(WbrExp(brac)) ) input
+  and wStringCont input =
+    ( pars_const >>= fun con -> pars_word_NoConst >>= fun wor -> return(WStringCont(con, wor)) ) input
+  and wbrExpCont input =
+    ( token "{" >> inBraceExp >>= fun barc -> token "}" >> pars_word_NoBr >>= fun wor -> return(WbrExpCont(barc, wor)) ) input
+  and pars_word_NoConst input = 
+  (wbrExpCont <|> wbrExp) input
+  and pars_word_NoBr input = 
+  (wStringCont <|> wString) input
+  and inBraceExp input =
+    ( (many1 (pars_word >>= fun elem -> token "," >> return(elem)) >>= fun lst -> pars_word >>= fun last -> return(InBracExpan (lst @ [last])))
+      <|> 
+      (pars_word >>= fun only -> return(InBracExpan([only]))) 
+    ) input
+let rec word_string wor =
+  match wor with
+  | WString (c) -> "WString(" ^ const_to_string c ^ ")"
+  | WbrExp (brac) -> "WbrExp(" ^ brexp_to_string brac ^ ")"
+  | WStringCont (con, brac) -> "WStringCont(" ^ const_to_string con ^ "| " ^ word_string brac ^ ")"
+  | WbrExpCont (brac, con) -> "WbrExpCont(" ^ brexp_to_string brac ^ "|" ^ word_string con ^ ")"
+  and brexp_to_string bra =
+    let rec wordlst_to_string = function
+    | [] -> ""
+    | e :: l -> word_string e ^ ", " ^ wordlst_to_string l in
+    match bra with
+    InBracExpan (ls) -> wordlst_to_string ls
+let option_word_string arg =
+  match arg with
+  | None -> "None"
+  | Some x -> word_string x
+
+  (*ssss{${sds[1]},sss,}dsdsd*) (*не парсит это, тк после запятой пустая строка, он не парсит пустую строку*)
+let ff = print_string "\n//////WORD TEST////////////\n";;
+let (str:string) = "ssss{${sds[1]},sss,}dsdsd";; 
+print_string (str ^ " = ");;
+let ddddd = print_string (option_word_string (apply pars_word str));;
+
+(*-----------------------------Парсим stroperator----------------------------------------------------------------------------*)
+  (*
 type stroperator =
   Leng of const (*${#string}*)
   | PicFromPos of const * const (*${string:position}*)
@@ -307,60 +453,65 @@ type stroperator =
 let rec pars_stroperator input = 
   (replaceEnd <|> replaceBeg <|> replaceAll <|> replaceFirst <|> cutEndMore <|> cutBegMore <|> cutEndLess <|> cutBegLess <|> picFromPosLeng <|> picFromPos <|> leng) input
       and replaceEnd input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "/" >> token "%" >> pars_const_vari >>= fun patrn -> token "/" >> pars_const_vari >>= fun rep -> token "}" >> return (ReplaceEnd(str, patrn, rep)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "/" >> token "%" >> pars_const >>= fun patrn -> token "/" >> pars_const >>= fun rep -> token "}" >> return (ReplaceEnd(str, patrn, rep)) ) input
       and replaceBeg input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "/" >> token "#" >> pars_const_vari >>= fun patrn -> token "/" >> pars_const_vari >>= fun rep -> token "}" >> return (ReplaceBeg(str, patrn, rep)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "/" >> token "#" >> pars_const >>= fun patrn -> token "/" >> pars_const >>= fun rep -> token "}" >> return (ReplaceBeg(str, patrn, rep)) ) input
       and replaceAll input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "/" >> token "/" >> pars_const_vari >>= fun patrn -> token "/" >> pars_const_vari >>= fun rep -> token "}" >> return (ReplaceAll(str, patrn, rep)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "/" >> token "/" >> pars_const >>= fun patrn -> token "/" >> pars_const >>= fun rep -> token "}" >> return (ReplaceAll(str, patrn, rep)) ) input
       and replaceFirst input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "/" >> pars_const_vari >>= fun patrn -> token "/" >> pars_const_vari >>= fun rep -> token "}" >> return (ReplaceFirst(str, patrn, rep)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "/" >> pars_const >>= fun patrn -> token "/" >> pars_const >>= fun rep -> token "}" >> return (ReplaceFirst(str, patrn, rep)) ) input
       and cutEndMore input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "%" >> token "%" >> pars_const_vari >>= fun substr -> token "}" >> return (CutEndMore(str, substr)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "%" >> token "%" >> pars_const >>= fun substr -> token "}" >> return (CutEndMore(str, substr)) ) input
       and cutBegMore input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "#" >> token "#" >> pars_const_vari >>= fun substr -> token "}" >> return (CutBegMore(str, substr)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "#" >> token "#" >> pars_const >>= fun substr -> token "}" >> return (CutBegMore(str, substr)) ) input
       and cutEndLess input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "%" >> pars_const_vari >>= fun substr -> token "}" >> return (CutEndLess(str, substr)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "%" >> pars_const >>= fun substr -> token "}" >> return (CutEndLess(str, substr)) ) input
       and cutBegLess input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token "#" >> pars_const_vari >>= fun substr -> token "}" >> return (CutBegLess(str, substr)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token "#" >> pars_const >>= fun substr -> token "}" >> return (CutBegLess(str, substr)) ) input
       and picFromPosLeng input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token ":" >> pars_const_vari >>= fun pos -> token ":" >> pars_const_vari >>= fun leng -> token "}" >> return (PicFromPosLeng(str, pos, leng)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token ":" >> pars_const >>= fun pos -> token ":" >> pars_const >>= fun leng -> token "}" >> return (PicFromPosLeng(str, pos, leng)) ) input
       and picFromPos input =
-        (token "$" >> token "{" >> pars_const_vari >>= fun str -> token ":" >> pars_const_vari >>= fun pos -> token "}" >> return (PicFromPos(str, pos)) ) input
+        (token "$" >> token "{" >> pars_const >>= fun str -> token ":" >> pars_const >>= fun pos -> token "}" >> return (PicFromPos(str, pos)) ) input
       and leng input =
         (token "$" >> token "{" >>  token "#" >> ident >>= fun str -> token "}" >> return (Leng(String(str))) ) input
-let pars_stroperator_arifm =
-  pars_stroperator >>= fun strop -> return(StringOp (strop))
-
-
-let parens = between (token "(") (token ")")
-let money_parens propars = token "$" >> (between (token "(") (token ")") propars) >>= fun arg -> return (AriConst(SubFn (arg)))
-let money_braces propars = token "$" >> ((between (token "{") (token "}")) propars) (*надо добавить обработку ${array[$i]}*)
-let add_op = token "+" >> return (fun x y -> Plus (x, y))
-let sub_op = token "-" >> return (fun x y -> Minus (x, y))
-let multi_op = token "*" >> return (fun x y -> Multi (x, y))
-let div_op = token "/" >> return (fun x y -> Divide (x, y))
-
-let and_op = token "&&" >> return (fun x y -> AndAr (x, y))
-let or_op = token "||" >> return (fun x y -> OrAr (x, y))
-let great_op = token ">" >> return (fun x y -> GreatAr (x, y))
-let less_op = token "<" >> return (fun x y -> LessAr (x, y))
-let ecGreat_op = token ">=" >> return (fun x y -> EcGreatAr (x, y))
-let ecLess_op = token "=<" >> return (fun x y -> EcLessAr (x, y))
-let ecualy_op = token "==" >> return (fun x y -> EcualyAr (x, y))
 ;;
-let rec arifm_not_call input = chainl1 arifmeticNOT (and_op <|> or_op <|> ecGreat_op <|> ecLess_op <|> ecualy_op) input
-and arifmeticNOT input = chainl1 termNOT (add_op <|> sub_op) input
-and termNOT input = chainl1 factorNOT (multi_op <|> div_op) input
-and factorNOT input = (money_parens arifm <|> parens arifm_not_call <|> pars_stroperator_arifm <|> pars_const_vari_arifm) input
-and arifm input = chainl1 arifmetic (and_op <|> or_op <|> ecGreat_op <|> ecLess_op <|> great_op <|> less_op <|> ecualy_op) input
-and arifmetic input = chainl1 term (add_op <|> sub_op) input
-and term input = chainl1 factor (multi_op <|> div_op) input
-and factor input = (money_parens arifm <|> parens arifm <|> pars_stroperator_arifm <|> pars_callFunction <|> pars_const_vari_arifm) input
-and pars_callFunction input = call_func input
-and call_func input =
-  (ident         >>= fun nam ->
-  (many (money_parens arifm <|> arifm_not_call))   >>= fun arg ->
-  ((with_redirF nam arg) <|> (with_redirL nam arg) <|> (return (CallFunction (nam, arg, Redirect("", "", ""))) )) ) input
+
+(*
+and arg = 
+  | Subarifm of arifm (*$((2+2))*)
+  | SubFn of expr (*$(...)*)
+  | StringOp of stroperator (*${#string}*)
+  | Word of word (*{a,b,c}, или string*) (*КОСЯК: ВСТАВИТЬ СЮДА ПЕРЕМЕННЫЕ*)
+and expr =
+  | Eqal of vari * arg (* a=b НО: смотри в листок внимательно*)
+  | CallFunction of string * arg list * redirect (*name, parametrs*)
+*)
+(*---------------------------------Парсим expr-------------------------------------------------------------------------*)
+let rec pars_arg input =
+  (sub_arifm <|> sub_fn <|> string_op <|> word_p) input
+  and sub_arifm input =
+    (token "$((" >> arifm >>= fun ar -> token "))" >> return (Subarifm(ar))) input
+  and sub_fn input =
+    (token "$(" >> pars_expr >>= fun fn -> token ")" >> return (SubFn(fn))) input
+  and string_op input =
+    (pars_stroperator >>= fun strop -> return(StringOp (strop)))input
+  and word_p input =
+    (pars_word >>= fun wd -> return(Word(wd))  )input
+and pars_expr input = (*<<<<<<<<<<<<<<<<*)
+  (eqal_e <|> call_e)input
+  and eqal_e input =
+    (array_decl_eq <|> single_eqal) input
+    and single_eqal input =
+      (vari_eqal >>= fun variable -> token "=" >> pars_arg >>= fun ag -> return (Eqal(variable, [ag]))) input
+    and array_decl input =
+      (bash_ident >>= fun str -> return(ArrayDecl(str))) input
+    and array_decl_eq input =
+      ( array_decl >>= fun massiv -> token "=(" >> pars_list_arg_array >>= fun args -> token ")" >> return(Eqal(massiv, args)) ) input
+    and pars_list_arg_array input =
+      ( pars_arg >>= fun beg -> (many1 (space >> spaces >> pars_arg)) >>= fun lst -> return (beg::lst) ) input
+  and call_e input =
+     (bash_ident >>= fun nam -> (many (space >> spaces >> pars_arg)) (*pars_list_arg*) >>= fun arglst -> 
+      ((with_redirF nam arglst) <|> (with_redirL nam arglst) <|> (return (CallFunction (nam, arglst, Redirect("", "", ""))) )) ) input
     and with_redirF nam arg input = 
       (token ">"    >> (* > *)
       ident_p        >>= fun red ->
@@ -378,149 +529,171 @@ and call_func input =
       | a::s -> return (CallFunction (nam, arg, Redirect("", red, "")))
       ) )input
 
-
-let rec arifm_to_string ex =
-  let rec arlist_string = function
-    | [] -> ""
-    | e :: l -> arifm_to_string e ^ " " ^ arlist_string l in
+let rec arg_to_string ar =
+  match ar with
+  | Subarifm (x) -> "Subarifm(" ^ arifm_to_string x ^ ")" (*$((2+2))*)
+  | SubFn (ex) -> "SubFn(" ^ expr_to_string ex ^ ")" (*$(...)*)
+  | StringOp (str) -> "StrngOP" ^ "did not done" ^ ")" (*${#string}*)
+  | Word (wd) -> "Word(" ^ word_string wd ^ ")"(*{a,b,c}, или string*)
+and expr_to_string ex =
   match ex with
-  Plus (l, r) -> "Plus(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
-  | Minus (l, r) -> "Minus(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
-  | Multi (l, r) -> "Multi(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"
-  | Divide (l, r) -> "Divide(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"           
-  | AriConst (Const(Int c)) -> string_of_int c 
-  | AriConst (Const(String d))-> d
-  | AriConst (Const(Float d))-> string_of_float d
-  | AriConst (Const(Variable v)) -> "Vari( " ^ v ^ ")" 
-  | Ecual (str, ar) -> "Ecual(" ^ str ^ " , " ^ arifm_to_string ar ^ ")"
-  | AndAr (l, r)     -> "And(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")" (*a && b *)
-  | OrAr (l, r)      -> "Or(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")" (*a || b *)
-  | GreatAr (l, r)   -> "Great(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"(*a > b *)
-  | LessAr (l, r)    -> "Less(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"(*a < b *) 
-  | EcGreatAr (l, r) -> "EcGreat(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"  (*a >= b *)
-  | EcLessAr (l, r)  ->"EcLess(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"    (*a =< b *)
-  | EcualyAr (l, r)  ->"EcualY(" ^ arifm_to_string l ^ " , " ^ arifm_to_string r ^ ")"    (*a == b *)
-  | StringOp (ReplaceAll (s, p, r)) -> "ReplaceAll(" ^ arifm_to_string (AriConst(Const(s))) ^ ", " ^ arifm_to_string (AriConst(Const(p))) ^ ", " ^ arifm_to_string (AriConst(Const(r))) ^ ")"
-  | StringOp (d) -> "some string operation"
-  | AriConst (SubFn(ari)) -> "Ari(SubFn(" ^ arifm_to_string ari ^ "))"
-  | CallFunction (str, arlst, Redirect(fir, sec, thir)) -> "CallFunction(" ^ str ^ ", " ^ arlist_string arlst ^ ", " ^ "Redirect(" ^ fir ^ ", " ^ sec ^ ", " ^ thir ^ "))"
-  | Braces (_) -> "braces"  
-
-let arifmOption_to_string d =
-  match d with
-  None -> "None"
-  | Some x -> arifm_to_string x
-  ;;
-
-print_string "//////(3+5)==4.1 + $Path + ${stssring//passsttern/repssslacement}////////////\n";;
-let (str:string) = "echo $(2+ echo ss.txt) < mm.txt";;
-print_string (str ^ " = ");;
-print_string (arifmOption_to_string (apply arifm str));;
-(*EcualY(Plus(3 , 5) , Plus(Plus(4.1 , Vari( Path)) , ReplaceAll(stssring, passsttern, repssslacement)))*)
-(*конец парсинга arifm, но бужет еще функция all_arifm*)
-
-(*та самая all_arifm которая парсит только  Ecual*)
-let rec all_arifm input = (ecualer) input
- and ecualer input =
-  (ident >>= fun variable ->
-  token "=" >>
-  arifm >>= fun arifmer ->
-  return (Ecual(variable, arifmer)) ) input
-;;
-
-let (str:string) = "sss = rrr + 3";;
-print_string ("\n" ^ str ^ " <-> ");;
-print_string (arifmOption_to_string (apply (all_arifm <|> arifm) str));;
-
-
-print_string "\n example of ident_p: ";
-match apply ident_p "sd.sd." with
-None -> print_string "None"
-|Some (x) -> print_string x
-;;
-
-let name = ident >>= fun name -> return (name)
-(*
-let atom = (ident => (fun s -> String s))
-       <|> (integer => (fun x -> Int x))
-;;
-*)
+  | Eqal (var, ar) -> "Eqal(" ^ vari_to_string var ^ ","^ arglst_to_string ar ^")" (* a=b НО: смотри в листок внимательно*)
+  | CallFunction (str, arglst, Redirect(fir, sec, thir)) -> "CallFunction(" ^ str ^ ", "^ "Listarg("^ arglst_to_string arglst ^ ")Redirect(" ^fir ^", "^ sec^", " ^ thir ^"))"  (*name, parametrs*)
+and arglst_to_string = function
+| [] -> ""
+| a::lis -> arg_to_string a ^ ", " ^ arglst_to_string lis
+let option_expr_string = function
+  | None -> "NONE"
+  | Some (x) -> expr_to_string x
+let ff = print_string "\n//////EXPR+ARG TEST////////////\n";;
+(*cat .w123.txt > txt.txt*)
+let (str:string) = "ss=(111 33 ww $(cat .w123.txt))";;
+print_string (str ^ " <-> ");;
+let ddddd = print_string (option_expr_string (apply pars_expr str));;
 
 (*
-(*тест парсера cmd*)
-let c_str = "cat file.txt > my.txt";;
-let file = apply cmd_pars c_str;;
-print_string ("\n example of cmd_parse with " ^ c_str ^ ": ");;
-print_string (cmdOption_to_string (file));;
-print_string "\n";;
-;;
-(*поехали в pipe*)
+and pipeOp = And | Or | Dpoint | Redi (*склейки пайпы || && ;*)
+and pipe = (*не работает надо чет придумать*)
+   | Expression of expr (*может или не может тут быть??*)
+   | IfElse of expr * pipeConveyor * pipeConveyor (*if then else*)
+   | While of expr * pipeConveyor (*clause, todoList*)
+and pipeConveyor =
+  | Pipline of pipeOp * pipe * pipeConveyor
+  | SigPipe of pipe
 *)
-let rec parse_pipe input =
-  ( (parse_pipeline <|> single_pipe) >>= fun par -> return (par)) input
+(*-------------------------------------Парсим PIPE--------------------------------------------------------------------*)
+
+let rec pars_pipeConv input =
+  ( (parse_pipeline <|> single_pipe_conveyr) >>= fun par -> return (par)) input
 and single_pipe input =
-  ((while_pars <|> ifelse_pars <|> expr_pars) >>= fun par -> return (par)) input
+  ((while_pars <|> ifelse_pars <|> expr_pipe) >>= fun par -> return (par)) input
+and single_pipe_conveyr input =
+  ((while_pars <|> ifelse_pars <|> expr_pipe) >>= fun par -> return (SigPipe(par))) input
 and parse_pipeline input =
   ((p_dpoint <|> p_pipe) >>= fun par -> return(par)) input
 and p_dpoint input = 
   (single_pipe >>= fun fir 
-  -> token ";" >> single_pipe >>= fun sec 
+  -> spaces >> token ";" >> spaces >> pars_pipeConv >>= fun sec 
   -> return (Pipline (Dpoint, fir, sec))) input
 and p_pipe input = 
   (single_pipe >>= fun fir 
-  -> token "|" >> single_pipe >>= fun sec 
+  -> spaces >> token "|" >> spaces >> pars_pipeConv >>= fun sec 
   -> return (Pipline (Redi, fir, sec))) input
-      and expr_pars input =
-        ((all_arifm <|> arifm) >>= fun ar -> return (Expression (ar))) input        
+      and expr_pipe input =
+        (pars_expr >>= fun ar -> return (Expression (ar))) input        
       and while_pars input =
         (token "while"   >> (* while *)
-        arifm         >>= fun pred ->
+        spaces >> token "[" >>
+        pars_expr         >>= fun pred ->
+        spaces >> token "]" >>
         token "do" >> (* do *)
-        parse_pipe     >>= fun act ->
+        pars_pipeConv     >>= fun act ->
         token "done"    >>
         return (While (pred, act))) input
       and ifelse_pars input =
         (token "if"   >> (* if *)
-        arifm         >>= fun pred ->
+        pars_expr        >>= fun pred ->
         token "then" >> (* then *)
-        parse_pipe   >>= fun thn ->
+        pars_pipeConv   >>= fun thn ->
         token "else" >> (* else *)
-        parse_pipe   >>= fun els ->
+        pars_pipeConv   >>= fun els ->
         token "fi"    >>
         return (IfElse (pred, thn, els))) input
-     (* and function_pars input = 
-        (ident        >>= fun nam ->
-        token "("     >>
-        (many ident)  >>= fun arg ->
-        token ")"     >>
-        token "{"     >> (* { *)
-        parse_pipe    >>= fun act ->
-        token "}"     >>
-        return (Function (nam, arg, act))) input  
-      *)
-;;
+
 let rec pipe_to_string pip =
   (*let rec list_string = function 
   [] -> ""
   | e::l -> e ^ " " ^ list_string l
   in*)
   match pip with
-  Pipline (Dpoint, l, r) -> "Pipeline(Dpoint, " ^ pipe_to_string l ^ ", " ^ pipe_to_string r ^ ")"
-  | Pipline (Redi, l, r) -> "Pipeline(Redi, " ^ pipe_to_string l ^ ", " ^ pipe_to_string r ^ ")"
-  | Expression (ar) -> "Expression(" ^ arifm_to_string ar ^ ")"
-  | While (pred, p) -> "While(" ^ arifm_to_string pred ^ ", " ^ pipe_to_string p ^ ")"
-  | IfElse (ar, l, r) -> "IFElse(" ^ arifm_to_string ar ^ ", " ^ pipe_to_string l ^ ", " ^ pipe_to_string r ^ ")"
-  | _ -> "i do not know"
-
-let pipeOption_to_string pip =
+  | Expression (ar) -> "Expression(" ^ expr_to_string ar ^ ")"
+  | While (pred, p) -> "While(" ^ expr_to_string pred ^ ", " ^ pipeConveyor_to_string p ^ ")"
+  | IfElse (ar, l, r) -> "IFElse(" ^ expr_to_string ar ^ ", " ^ pipeConveyor_to_string l ^ ", " ^ pipeConveyor_to_string r ^ ")"
+and pipeConveyor_to_string conv =
+  match conv with
+  | SigPipe (p) -> "SigPipe(" ^ pipe_to_string p ^ ")"
+  | Pipline (Dpoint, l, r) -> "Pipeline(Dpoint, " ^ pipe_to_string l ^ ", " ^ pipeConveyor_to_string r ^ ")"
+  | Pipline (Redi, l, r) -> "Pipeline(Redi, " ^ pipe_to_string l ^ ", " ^ pipeConveyor_to_string r ^ ")"
+  | _ -> "did not done yet"
+let option_pipeConveyr_string pip =
   match pip with
    None -> "None"
-  | Some (p) -> pipe_to_string p
+  | Some (p) -> pipeConveyor_to_string p
 ;;
-(*тест пайпов*)
+(*while [ss=s] do pwd file.txt > my.txt; ss= 10+2 done*)
+let ff = print_string "\n//////PIPE TEST////////////\n";;
+
+let (str:string) = "echo www.txt ; cat w123.txt | echo yra";;
+print_string (str ^ "\n <-> \n");;
 let pp_str = "test () {pwd file.txt > my.txt; ss= 10+2}"
-let p_str = "while 10 < 2 do pwd file.txt > my.txt; ss= 10+2 done";;
-let p_file = apply parse_pipe p_str;;
-print_string ("\n example of pipe_parse with " ^ p_str ^ ": ");;
-print_string (pipeOption_to_string (p_file));;
-print_string "\n";;
+let ddddd = print_string (option_pipeConveyr_string (apply pars_pipeConv str));;
+
+(*
+type declFunct = 
+  Method of string * pipeConveyor 
+*)
+(*-------------------------------------Парсим DECLFUNTION----------------------------------------------------------*)
+let pars_declFunction input =
+   (bash_ident  >>= fun nam ->
+    spaces >> token "("  >>
+    token ")" >> spaces  >>
+    token "{" >> spaces >> 
+    pars_pipeConv    >>= fun act ->
+    spaces >> token "}"     >>
+    return (Method (nam, act))) input
+
+let declFunction_to_string dec =
+  match dec with
+  Method (name, act) -> "DeclFunct(" ^ name ^ ">" ^ pipeConveyor_to_string act ^ ")"
+let option_declFunction_string = function
+| None -> "NONE"
+| Some (x) -> declFunction_to_string x
+
+let ff = print_string "\n//////DeclFUNCTION TEST////////////\n";;
+
+let (str:string) = "myfunction (){ echo www.txt ; cat w123.txt | echo yra }";;
+print_string (str ^ "\n <-> \n");;
+let ddddd = print_string (option_declFunction_string (apply pars_declFunction str));;
+
+(*
+type  bCommand = 
+  | Pipe of pipe
+  | DeclFunct of declFunct
+type bCmdConv =
+  | BConv of bCommand * bCmdConv (*конвеер функций и кода*)
+  | BSigCmd of bCommand (*функция либо код*)
+*)
+
+(*------------------------------Парсим BCOMMAND и BCMDCONV--------------------------------------------------------*)
+
+let rec pars_bComdConv input =
+  (b_conv <|> bCmd_sig_cmd) input
+  and b_sig_cmd input =
+    (b_func <|> b_pipeConv) input
+  and bCmd_sig_cmd input =
+    (b_sig_cmd >>= fun bcmd -> return (BSigCmd(bcmd)) ) input
+  and b_func input =
+    (spaces >> pars_declFunction >>= fun fn -> return(DeclFunct(fn)) ) input
+  and b_pipeConv input =
+    (spaces >> pars_pipeConv >>= fun conv -> return (PipeConv(conv)) ) input
+  and b_conv input =
+  (b_sig_cmd >>= fun bcmd -> space >> pars_bComdConv >>= fun conv -> return(BConv(bcmd, conv)) ) input
+
+let bCommand_to_string = function
+| PipeConv x -> pipeConveyor_to_string x
+| DeclFunct x -> declFunction_to_string x
+let rec bCmdConv_to_string bcmd =
+  match bcmd with 
+  | BSigCmd x -> "BsigCmd(" ^ bCommand_to_string x ^ ")"
+  | BConv (x, y) -> "BConv(" ^ bCommand_to_string x ^"<>"^ bCmdConv_to_string y ^ ")"
+let option_bCmdConv_string = function
+| None -> "NONE"
+| Some x -> bCmdConv_to_string x
+
+
+let ff = print_string "\n//////BCmd+BCommand TEST////////////\n";;
+let (str:string) = "myfn (){echo eeee} echo rrr";; 
+print_string (str ^ "\n <-> \n");;
+let sds = apply pars_bComdConv str
+
+let ddddd = print_string (option_bCmdConv_string (apply pars_bComdConv str));;
